@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html>
+        <head>
+                <title>Control panel</title>
+<meta
+     name='viewport'
+     content='width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0'
+/>
+<link rel="manifest" href="manifest.json">
+<meta name="mobile-web-app-capable" content="yes">
+<style type="text/css">
+body {
+        background-color: black;
+        color: white;
+        overflow: -moz-scrollbars-none;
+        display: flex;
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: center;
+}
+.clear {
+        clear: both;
+}
+.switch, .off {
+        text-align: center;
+        margin: 2.5%;
+        background-color: red;
+        color: #0ff;
+        width: 20%;
+        font-size: 8em;
+        position: relative;
+}
+.switch.pending {
+        background-color: grey;
+        color: #000;
+}
+.switch.enabled {
+        background-color: green;
+        color: #f0f;
+}
+.hide {
+        height: 200px;
+}
+.switch:before, .off:before {
+        content: "";
+        padding-top: 100%;
+        display: block;
+}
+.content {
+        position: absolute;
+        bottom: 0;
+        top: 0;
+        right: 0;
+        left: 0;
+        font-size: 17vw;
+}
+</style>
+        </head>
+        <body>
+                <div class="switch" data-topic="t1/relay/0" data-topic-set="t1/relay/0/set" data-selector=""><div class="content">1</div></div>
+                <div class="switch" data-topic="t1/relay/1" data-topic-set="t1/relay/1/set" data-selector=""><div class="content">2</div></div>
+                <div class="switch" data-topic="tele/bedroom/SENSOR" data-topic-set="cmnd/tasmota_D7F296/ZbSend" data-selector="ZbReceived.0xB70B.Power" data-pattern='{"Device":"bedroom", "send":{"Power":XXX}}' data-refresh-value='{"device": "bedroom", "endpoint": 1, "cluster": 6, "read": 0}'><div class="content">3</div></div>
+                <div class="clear"></div>
+                <div class="off"><div class="content">off</div></div>
+        <script type="text/javascript" src="mqtt.js"></script>
+        <script type="text/javascript">
+                try{
+                        document.documentElement.mozRequestFullScreen();
+                }catch(e){}
+                window.addEventListener('load', function() {
+                        var mqtturi = new URL(location);
+                        mqtturi.protocol = 'ws:';
+                        mqtturi.pathname = mqtturi.pathname + '/mqtt/';
+                        var client = mqtt.connect(mqtturi.toString());
+                        var subs = {};
+                        Array.prototype.forEach.call(document.getElementsByClassName('switch'), function(el_) {
+                                (function(el) {
+                                        el.classList.add('pending');
+                                        var redraw = function(value) {
+                                                console.log('redrawing ' + el.dataset.topic + ' ' + el.dataset.selector + ' with ' + value);
+                                                if (!value)
+                                                        el.classList.remove('enabled');
+                                                else
+                                                        el.classList.add('enabled');
+                                                el.classList.remove('pending');
+                                        };
+                                        var dispatcher = function(value) {
+                                                redraw(value.toString().trim() == '1');
+                                        };
+                                        subs[el.dataset.topic] = subs[el.dataset.topic] || {};
+                                        subs[el.dataset.topic][el.dataset.selector] = dispatcher;
+                                        if (el.dataset['topicRefresh'] || el.dataset['refreshValue']) {
+                                                var refresh = function() {
+                                                        var topic = el.dataset['topicRefresh'] || el.dataset['topicSet'] || el.dataset.topic;
+                                                        var value = el.dataset['refreshValue'] || '';
+                                                        console.log('refresh: sending ' + value + ' to ' + topic);
+                                                        client.publish(topic, value);
+                                                };
+                                                setInterval(refresh, 30000 + parseInt(Math.random() * 500) * 8);
+                                                refresh();
+                                        }
+                                        var set_value = function(new_value) {
+                                                el.classList.add('pending');
+                                                var strPattern = el.dataset['pattern'] || 'XXX';
+                                                if (typeof strPattern !== 'string') {
+                                                        strPattern = JSON.stringify(strPattern);
+                                                }
+                                                var topic = el.dataset['topicSet'] || el.dataset.topic;
+                                                var payload = strPattern.replace(/XXX/g, Number(new_value).toString());
+                                                client.publish(topic, payload);
+                                                console.log('Sending ' + payload + ' to ' + topic);
+                                        };
+                                        el.addEventListener('click', function() {
+                                                if (el.classList.contains('pending')) return;
+                                                new_value = !el.classList.contains('enabled');
+                                                console.log('clicked on ' + el.dataset.topic + ', new_value is ' + new_value);
+                                                set_value(new_value);
+                                        });
+                                })(el_);
+                        });
+                        client.on('message', function(topic, payload) {
+                                var data = JSON.parse(payload);
+                                if (!subs.hasOwnProperty(topic)) {
+                                        consone.log('Unexpected topic: ' + topic + ', value: ' + payload);
+                                        return;
+                                }
+                                Object.keys(subs[topic]).forEach(function(selector) {
+                                        var value = data;
+                                        var dispatcher = subs[topic][selector];
+                                        selector.split('.').forEach(function(part) {
+                                                if (part === '' || value === null) {
+                                                        return;
+                                                }
+                                                if (value.hasOwnProperty(part)) {
+                                                        value = value[part];
+                                                } else {
+                                                        console.log(topic + ': cannot find ' + part + ' in ' + JSON.stringify(value) + ' of ' + JSON.stringify(data));
+                                                        value = null;
+                                                }
+                                        });
+                                        if (value === null) {
+                                                return;
+                                        }
+                                        console.log(topic + ': ' + (selector || '<value>') + ': ' + value);
+                                        dispatcher(value);
+                                });
+                        });
+                        Object.keys(subs).forEach(function(topic) {
+                                console.log('Subscribing to ' + topic);
+                                client.subscribe(topic);
+                        });
+                        Array.prototype.forEach.call(document.getElementsByClassName('off'), function(el) {
+                                el.addEventListener('click', function() {
+                                        Array.prototype.forEach.call(document.querySelectorAll('.switch.enabled'), function(sw) {
+                                                sw.dispatchEvent(new MouseEvent('click'));
+                                        });
+                                });
+                        });
+                }, false);
+        </script>
+        </body>
+</html>
